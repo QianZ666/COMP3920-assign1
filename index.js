@@ -31,8 +31,29 @@ const userCollection = database.db(mongodb_database).collection("users");
 
 app.use(express.urlencoded({ extended: false }));
 
+const { MongoClient } = require("mongodb");
+
+async function testDBConnection() {
+  const uri = `mongodb+srv://${mongodb_user}:${mongodb_password}@${mongodb_host}/${mongodb_database}?retryWrites=true&w=majority`;
+  const client = new MongoClient(uri);
+
+  try {
+    await client.connect();
+    console.log("MongoDB connected"); 
+  } catch (err) {
+    console.error("MongoDB connection failed", err);
+  } finally {
+    await client.close();
+  }
+}
+
+// Call it
+testDBConnection();
+
+
 var mongoStore = MongoStore.create({
-  mongoUrl: `mongodb+srv://${mongodb_user}:${mongodb_password}@${mongodb_host}/sessions`,
+mongoUrl: `mongodb+srv://${mongodb_user}:${mongodb_password}@${mongodb_host}/${mongodb_database}`,
+  collectionName: 'sessions', 
   crypto: {
     secret: mongodb_session_secret,
   },
