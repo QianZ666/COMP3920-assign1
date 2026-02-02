@@ -4,6 +4,7 @@ require("dotenv").config();
 const express = require("express");
 const session = require("express-session");
 const MongoStore = require("connect-mongo");
+const mysql = require("mysql2/promise");
 const bcrypt = require("bcrypt");
 const saltRounds = 12;
 
@@ -27,7 +28,7 @@ const node_session_secret = process.env.NODE_SESSION_SECRET;
 
 var { database } = include("databaseConnection");
 
-const userCollection = database.db(mongodb_database).collection("users");
+// const userCollection = database.db(mongodb_database).collection("users");
 
 app.use(express.urlencoded({ extended: false }));
 
@@ -58,6 +59,15 @@ mongoUrl: `mongodb+srv://${mongodb_user}:${mongodb_password}@${mongodb_host}/${m
     secret: mongodb_session_secret,
   },
 });
+
+//create a mysql connection
+const mysqlPool = mysql.createPool({
+  host: process.env.MYSQL_HOST,
+  user: process.env.MYSQL_USER,
+  password: process.env.MYSQL_PASSWORD,
+  database: process.env.MYSQL_DATABASE
+});
+
 
 app.use(
   session({
@@ -138,13 +148,12 @@ app.get("/nosql-injection", async (req, res) => {
 // Signup routes
 app.get("/signup", (req, res) => {
   var missingUserName = req.query.missingUserName;
-  var missingEmail = req.query.missingEmail;
+  // var missingEmail = req.query.missingEmail;
   var missingPassword = req.query.missingPassword;
   var html = `
     create user
     <form action='/submitUser' method='post'>
     <input name='username' type='text' placeholder='username'>
-    <input name='email' type='text' placeholder='email'>
     <input name='password' type='password' placeholder='password'>
     <button>Submit</button>
     </form>
@@ -152,9 +161,9 @@ app.get("/signup", (req, res) => {
   if (missingUserName) {
     html += "<br> Name is required";
   }
-  if (missingEmail) {
-    html += "<br> Email is required";
-  }
+  // if (missingEmail) {
+  //   html += "<br> Email is required";
+  // }
   if (missingPassword) {
     html += "<br> Password is required";
   }
@@ -217,16 +226,17 @@ app.get("/logout", (req, res) => {
 app.post("/submitUser", async (req, res) => {
   const username = req.body.username;
   const password = req.body.password;
-  const email = req.body.email;
+  // const email = req.body.email;
 
   const schema = Joi.object({
     username: Joi.string().alphanum().max(20).required(),
-    email: Joi.string().email().required(),
+    // email: Joi.string().email().required(),
     password: Joi.string().max(20).required(),
   });
 
+
   const { error } = schema.validate(
-    { username, email, password },
+    { username, password },
     { abortEarly: false }
   );
 
@@ -234,7 +244,7 @@ app.post("/submitUser", async (req, res) => {
     const query = [];
     for (const detail of error.details) {
       if (detail.context.key === "username") query.push("missingUserName=true");
-      if (detail.context.key === "email") query.push("missingEmail=true");
+      // if (detail.context.key === "email") query.push("missingEmail=true");
       if (detail.context.key === "password") query.push("missingPassword=true");
     }
     res.redirect("/signup?" + query.join("&"));
@@ -242,28 +252,34 @@ app.post("/submitUser", async (req, res) => {
   }
 
   try {
-    const existingUser = await userCollection.findOne({ 
-      $or: [{ username }, { email }]
-    });
+    const [existingUser] = await mysqlPool.query(
+      "SELECT id FROM users WHERE username = ?",
+       [username ]
+    );
     
-    if (existingUser) {
-      let query = [];
-      if (existingUser.username === username) query.push("usernameExists=true");
-      if (existingUser.email === email) query.push("emailExists=true");
-      return res.redirect("/signup?" + query.join("&"));
+    if (existingUser.length > 0) {
+      // let query = [];
+      // if (existingUser.username === username) query.push("usernameExists=true");
+      // // if (existingUser.email === email) query.push("emailExists=true");
+      // return res.redirect("/signup?" + query.join("&"));
+      return res.redirect("/signup");
     }
 
     const hashedPassword = await bcrypt.hash(password, saltRounds);
 
-    await userCollection.insertOne({ 
-      username, 
-      email, 
-      password: hashedPassword,
-      createdAt: new Date()
-    });
+    // await userCollection.insertOne({ 
+    //   username, 
+    //   // email, 
+    //   password: hashedPassword,
+    //   createdAt: new Date()
+    // });
+    await mysqlPool.query(
+        "INSERT INTO users (username, password) VALUES (?, ?)",
+         [username, hashedPassword]
+    );
     req.session.authenticated = true;
     req.session.username = username;
-    req.session.email = email;
+    // req.session.email = email;
     return res.redirect("/members");
     
   } catch (err) {
@@ -287,24 +303,65 @@ app.post("/loggingin", async (req, res) => {
     return res.redirect('/login?error=validation_error&username=' + encodeURIComponent(username));
   }
 
-  // Find user
-  const user = await userCollection.findOne({ username });
-  if (!user) {
-    return res.redirect('/login?error=invalid_credentials&username=' + encodeURIComponent(username));
-  }
+  try {
+    // Find user securely
+    const [rows] = await mysqlPool.query(
+      "SELECT * FROM users WHERE username = ?",
+      [username]
+    );
 
-  // Verify password
-  const passwordMatch = await bcrypt.compare(password, user.password);
-  if (!passwordMatch) {
-    return res.redirect('/login?error=invalid_credentials&username=' + encodeURIComponent(username));
-  }
+    if (rows.length === 0) {
+      return res.redirect('/login?error=invalid_credentials&username=' + encodeURIComponent(username));
+    }
 
-  // Create session
-  req.session.authenticated = true;
-  req.session.username = username;
-  req.session.email = user.email;
-  res.redirect("/members");
+    const user = rows[0];
+
+    // Verify password with bcrypt
+    const passwordMatch = await bcrypt.compare(password, user.password);
+
+    if (!passwordMatch) {
+      return res.redirect('/login?error=invalid_credentials&username=' + encodeURIComponent(username));
+    }
+
+    // Create session
+    req.session.authenticated = true;
+    req.session.username = user.username;
+
+    return res.redirect("/members");
+
+  } catch (err) {
+    console.error("Login error:", err);
+    res.status(500).send("Server error");
+  }
 });
+
+
+//unsafe way easy to injection
+// app.post("/loggingin", async (req, res) => {
+//   const { username, password } = req.body;
+
+//   const sql = `
+//     SELECT * FROM users 
+//     WHERE username = '${username}'
+//   `;
+
+//  try {
+//     const [rows] = await mysqlPool.query(sql); 
+
+//     if (rows.length > 0) {
+//       req.session.authenticated = true;
+//       req.session.username = username;
+//       return res.redirect("/members");
+//     }
+
+//     res.redirect("/login?error=invalid");
+
+//   } catch (err) {
+//     console.error("SQL Error:", err);
+//     res.status(500).send("Database error");
+//   }
+// });
+
 
 app.use(express.static(__dirname + "/public"));
 
