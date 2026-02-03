@@ -5,6 +5,7 @@ const express = require("express");
 const session = require("express-session");
 const MongoStore = require("connect-mongo");
 const mysql = require("mysql2/promise");
+const fs = require('fs');
 const bcrypt = require("bcrypt");
 const saltRounds = 12;
 
@@ -65,7 +66,18 @@ const mysqlPool = mysql.createPool({
   host: process.env.MYSQL_HOST,
   user: process.env.MYSQL_USER,
   password: process.env.MYSQL_PASSWORD,
-  database: process.env.MYSQL_DATABASE
+  database: process.env.MYSQL_DATABASE,
+  port: process.env.MYSQL_PORT || 21345, 
+
+  ssl: {
+    rejectUnauthorized: true,
+    ca: fs.readFileSync('./ca.pem').toString(), 
+  },
+
+  waitForConnections: true,
+  connectionLimit: 10,
+  queueLimit: 0
+
 });
 
 
