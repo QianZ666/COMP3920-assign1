@@ -6,6 +6,7 @@ const session = require("express-session");
 const MongoStore = require("connect-mongo");
 const mysql = require("mysql2/promise");
 const bcrypt = require("bcryptjs");
+const fs = require("fs");
 const saltRounds = 12;
 
 const port = process.env.PORT || 3000;
